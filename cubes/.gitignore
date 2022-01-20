@@ -1,0 +1,7 @@
+*.asy
+*.pre
+*.pdf
+*[0-9].tex
+*.aux
+*.log
+*.pre

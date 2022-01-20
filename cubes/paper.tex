@@ -1,0 +1,137 @@
+\documentclass{article}
+\usepackage[inline]{asymptote}
+
+\begin{asydef}
+
+void drawRightAngle(pair A, pair B, pair C, real size=0.2, pen p=black) {
+    pair d1 = unit(A - B) * size;
+    pair d2 = unit(C - B) * size;
+
+    draw((B + d1) -- (B + d1 + d2) -- (B + d2), p);
+}
+
+void markAngle(pair A, pair B, pair C, real radius=0.2, string label="") {
+    pair d1 = unit(A - B) * radius;
+    pair d2 = unit(C - B) * radius;
+    
+    draw(arc(B, d1, d2));
+}
+
+void labelLength(pair A, pair B, string lab="", real amp=0.3, real sep=0.1) {
+    path b = brace(A, B, amp);
+
+    draw(b);
+    label(midpoint(b) + unit(B - A) * dir(90) * sep, lab);
+}
+
+void markAngleMultiple(pair A, pair B, pair C, real radius=0.2, int radiiCount=2, string label="") {
+
+}
+
+struct SquareDrawOpts {
+    int test;
+}
+
+struct HorizontalCast {
+    bool successful; // whether the cast hit anything
+    pair hit1;
+    pair hit2;
+
+    int hitCount() {
+        if (!this.successful) {
+            return 0;
+        }
+
+        if (length(this.hit1 - this.hit2) < 1e-6 /* epsilon */) {
+            return 1;
+        }
+
+        return 2;
+    }
+
+    path getPath() {
+        return hit1--hit2;
+    }
+}
+
+// Abstraction of a tilted square
+struct Square {
+    pair A;
+    pair B;
+    pair C;
+    pair D;
+    
+    real size;
+    real theta;
+    pair center;
+
+    path getPath() {
+        return A -- B -- C -- D -- cycle;
+    }
+
+    HorizontalCast horizontalCast(real y) {
+        // We make some assumptions: B is below A, C is below D, etc.
+        HorizontalCast cast;
+
+        if (y < this.B.y || y > this.D.y) {
+            cast.successful = false;
+        }
+
+        pair[] ints = intersectionpoints(this.getPath(), (-100, y)--(100, y), 1e-6 /* epsilon */);
+        if (ints.length == 0) {
+            cast.successful = false;
+            return cast;
+        }
+
+        cast.successful = true;
+        if (ints.length == 1) {
+            cast.hit1 = cast.hit2 = ints[0];
+        } else {
+            cast.hit1 = ints[0];
+            cast.hit2 = ints[1];
+        }
+
+        return cast;
+    }
+
+    void drawRightAngleMarks() {
+        drawRightAngle(this.A, this.B, this.C);
+        drawRightAngle(this.B, this.C, this.D);
+        drawRightAngle(this.C, this.D, this.A);
+        drawRightAngle(this.D, this.A, this.B);
+    }
+}
+
+// size = side length, theta = displacement from horizontal in radians
+Square tiltedSquare(pair center, real size=1, real theta=0) {
+    theta = fmod(theta, pi / 2); // wrap to 0--90 degrees
+
+    pair bottomEdgeDisp = expi(-theta);
+    pair rightEdgeDisp = expi(-theta + pi / 2);
+
+    pair A = center - bottomEdgeDisp - rightEdgeDisp;
+    pair B = center + bottomEdgeDisp - rightEdgeDisp;
+    pair C = center + bottomEdgeDisp + rightEdgeDisp;
+    pair D = center - bottomEdgeDisp + rightEdgeDisp;
+
+    Square s;
+    s.A = A; s.B = B; s.C = C; s.D = D; s.size = size; s.theta = theta; s.center = center;
+
+    return s;
+}
+
+\end{asydef}
+
+\begin{document}
+\begin{asy}
+size(300);
+
+Square s = tiltedSquare((0,0), 1, 0.3);
+
+draw(s.getPath());
+s.drawRightAngleMarks();
+
+labelLength(s.B, s.A, "$s$");
+\end{asy}
+
+\end{document}
