@@ -10,18 +10,21 @@ void drawRightAngle(pair A, pair B, pair C, real size=0.2, pen p=black) {
     draw((B + d1) -- (B + d1 + d2) -- (B + d2), p);
 }
 
-void markAngle(pair A, pair B, pair C, real radius=0.2, string label="") {
+void markAngle(pair A, pair B, pair C, real radius=0.2, string lab="", bool ccw=true, bool showArrow=false) {
     pair d1 = unit(A - B) * radius;
     pair d2 = unit(C - B) * radius;
-    
-    draw(arc(B, d1, d2));
+    path pth = arc(B, B+d1, B+d2, ccw);
+    draw(pth, arrow=showArrow ? Arrow : None);
+    if (length(lab) > 0) {
+        label(midpoint(pth), lab, unit(midpoint(pth) - B));
+    }
 }
 
-void labelLength(pair A, pair B, string lab="", real amp=0.3, real sep=0.1) {
-    path b = brace(A, B, amp);
+void labelLength(pair A, pair B, string lab="", real sep=0.2, real amp=0.3, real labelSep=0.1) {
+    path b = shift(unit(B - A) * sep * dir(90)) * brace(A, B, amp);
 
     draw(b);
-    label(midpoint(b) + unit(B - A) * dir(90) * sep, lab);
+    label(midpoint(b) + unit(B - A) * dir(90) * labelSep, lab);
 }
 
 void markAngleMultiple(pair A, pair B, pair C, real radius=0.2, int radiiCount=2, string label="") {
@@ -100,6 +103,18 @@ struct Square {
         drawRightAngle(this.C, this.D, this.A);
         drawRightAngle(this.D, this.A, this.B);
     }
+
+    void labelPoints() {
+        label(this.A, "$A$", SW);
+        label(this.B, "$B$", SE);
+        label(this.C, "$C$", NE);
+        label(this.D, "$D$", NW);
+    }
+
+    void drawARay() {
+        draw(this.A -- (this.A+(this.size*3,0)), dashed);
+    }
+
 }
 
 // size = side length, theta = displacement from horizontal in radians
@@ -119,19 +134,51 @@ Square tiltedSquare(pair center, real size=1, real theta=0) {
 
     return s;
 }
+path getWater(real width=2) {
+    path p;
+    int count = 500;
+    int density = 50;
+    for (int i = 0; i < count; ++i) {
+        p = p..((2 * i / count - 1) * width, (sin(i * density / count)) * 0.03);
+    }
+    return p;
+}
 
 \end{asydef}
 
 \begin{document}
+
+When you drop a cube into water, how will it float?
+
 \begin{asy}
-size(300);
+size(250);
+import patterns;
 
-Square s = tiltedSquare((0,0), 1, 0.3);
+add("hatch",hatch());
+Square s = tiltedSquare((0,0.1), 1, 0.3);
 
-draw(s.getPath());
-s.drawRightAngleMarks();
+filldraw((-2,-2)--getWater()--(2,-2)--cycle, rgb(140, 140, 255), black);
+    filldraw(s.getPath(), pattern("hatch"));
+\end{asy}
 
-labelLength(s.B, s.A, "$s$");
+It seems like a pretty straightforward question; if it's denser than water, it will sink, and if it is lighter, it will sit on top. But in what orientation? Parallel to the water surface? Corner down?
+
+The answer turns out to be quite complicated. We'll confine our investigation to two dimensions for now.
+
+\begin{asy}
+    size(250);
+    Square s = tiltedSquare((0,0), 1, 0.4);
+    
+    draw(s.getPath());
+    s.labelPoints();
+    s.drawARay();
+
+    dot(s.center);
+    label(s.center, "$O$", N);
+    markAngle(s.A + (1,0), s.A, s.B, 0.7, "$\theta$", false, true);
+
+    labelLength(s.B, s.A, "$s$");
+    
 \end{asy}
 
 \end{document}
