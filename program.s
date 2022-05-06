@@ -126,31 +126,19 @@ start:
           call      call_mmap               ; get memory
           xchg      rax, rsi                ; rsi SHOULD be the beginning of the mmap-ed memory?
           mov       r10, rsi
-          mov       qword [rsi], "poop"     ; store poop
+          mov       qword [rsi], "Outp"
+          add       rsi, 4
+          mov       qword [rsi], `ut:\n`
           add       rsi, 4
 
-          mov       r11, 1 
-          mov       r12, 0 
-          mov       r13, 0
-fibonacci:
-          mov       rdi, r12
-          add       rdi, r11
+
+
+          rdtsc
+          shl       rdx, 16
+          mov       rdi, rdx
 
           call      u64_to_str
 
-
-          add       rsi, rax
-          mov       byte [rsi], `\n` 
-          inc       rsi
-
-          mov       r11, r12
-          mov       r12, rdi
-          inc       r13
-
-          cmp       r13, 20
-          jl        fibonacci
-
-          
           mov       rax, 0x02000004         ; system call for write
           mov       rdi, 1                  ; file handle 1 is stdout
           mov       rsi, r10                ; address of string to output?
