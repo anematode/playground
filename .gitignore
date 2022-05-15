@@ -1,4 +1,4 @@
-**/**.dSYM
-**/**.tmp
-**/**.out
-**/**.swp
+*.swp
+*.tmp
+*.out
+*.dSYM
