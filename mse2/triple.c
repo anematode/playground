@@ -1,9 +1,10 @@
-// gcc triple.c -o triple -march=haswell -g
+// gcc triple.c -o triple -march=haswell -g -O2
 #include <immintrin.h>
 #include <time.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdint.h>
+#include <string.h>
 #include <limits.h>
 
 #ifndef __AVX2__
@@ -11,15 +12,14 @@
 #endif
 
 #ifndef __BMI2__
-#error 'BMI2 needed"
+#error "BMI2 needed"
 #endif
 
-const size_t SRC_SIZE = 1ULL << 33; // bytes
+const size_t SRC_SIZE = 1ULL << 20; // bytes
 
 uint32_t lut[256];
 // Probably too big to fit in L1d...
 uint64_t lut16[65536];
-
 
 // Reference implementation, working byte by byte (~7.200 cycles / byte)
 void basic_stretch_data(void* src, size_t bytes, void* dst) {
@@ -35,7 +35,8 @@ void basic_stretch_data(void* src, size_t bytes, void* dst) {
     }
 }
 
-// Attempts to be a bit more clever, working in 16-bit chunks and writing in 64-bit chunks (~5.01 cycles / byte)
+// Attempts to be a bit more clever, working in 16-bit chunks and writing in 64-bit chunks (~5.01 cycles / byte).
+// Expects 8-byte alignment.
 void improved_stretch_data(void* src, size_t bytes, void* dst) {
     uint16_t* src_c = src;
     uint64_t* dst_c = dst;
@@ -53,42 +54,33 @@ void improved_stretch_data(void* src, size_t bytes, void* dst) {
     }
 }
 
-// Every three bits toggled, in one of three shifts
+// Every three bits toggled, in one of three locations
 #define BIT_MASK_1 0x9249249249249249ULL
 #define BIT_MASK_2 (BIT_MASK_1 >> 1)
 #define BIT_MASK_3 (BIT_MASK_1 >> 2)
 
-// Expects 32-bit alignment. ~4.363 cycles / byte
+// Expects 32-byte alignment. ~3.02 cycles / byte
 void pdep_stretch_data(void* src, size_t bytes, void* dst) { 
     uint64_t* src_c = src;
     uint64_t* dst_c = dst;
 
-    uint64_t p1, p2, p3, p4, p5, p6;
+    uint64_t k;
 
-    for (size_t i = 0; i < bytes / 8; i += 4) {
+    for (size_t i = 0; i < bytes / 8; ) {
 	// Output 96 bytes per loop 
 	uint64_t k = src_c[i];
 
-#define GRAB_PARTS(a, b, c)  \
-	a = _pdep_u64(k, BIT_MASK_1);	          /* first 22 bits (little endian) */ \
-	b = _pdep_u64(k >> 22, BIT_MASK_2);       /* middle 21 bits */ \
-	c = _pdep_u64(k >> 43, BIT_MASK_3);       /* last 21 bits */
+#define WRITE_PARTS  \
+	k = src_c[i]; \
+	dst_c[3*i] = _pdep_u64(k, BIT_MASK_1);	          /* first 22 bits (little endian) */ \
+	dst_c[3*i+1] = _pdep_u64(k >> 22, BIT_MASK_2);       /* middle 21 bits */ \
+	dst_c[3*i+2] = _pdep_u64(k >> 43, BIT_MASK_3);       /* last 21 bits */ \
+	i += 1;
 
-	GRAB_PARTS(p1, p2, p3)	
-	k = src_c[i+1];
-	GRAB_PARTS(p4, p5, p6)
-	
-	_mm256_store_si256((__m256i*) &dst_c[3 * i], _mm256_set_epi64x(p4, p3, p2, p1));
-
-	k = src_c[i+2];
-	GRAB_PARTS(p1, p2, p3)
-
-	k = src_c[i+3];
-	
-	_mm256_store_si256((__m256i*) &dst_c[3 * i + 4], _mm256_set_epi64x(p2, p1, p6, p5));
-	GRAB_PARTS(p4, p5, p6)
-	    
-	_mm256_store_si256((__m256i*) &dst_c[3 * i + 8], _mm256_set_epi64x(p6, p5, p4, p3));
+	WRITE_PARTS
+	WRITE_PARTS	
+	WRITE_PARTS
+	WRITE_PARTS
     }
 }
 
@@ -133,23 +125,30 @@ int main() {
 
     char* src = aligned_alloc(32, SRC_SIZE);
     char* dst = aligned_alloc(32, 3 * SRC_SIZE);
+    char* dst2 = aligned_alloc(32, 3 * SRC_SIZE);
 
     printf("Initializing data\n");
 
-    // Init source with some data
     for (size_t i = 0; i < SRC_SIZE; ++i) {
 	src[i] = i;
     }
 
+    memset(dst, 3 * SRC_SIZE, 1);
+    memset(dst2, 3 * SRC_SIZE, 1);
+
+    printf("Initialized data\n");
+
     // Stretch data so that each bit becomes three bits in the result, with two of them 0
     clock_start(); 
+    for (int i = 0; i < 1000; ++i) {
     pdep_stretch_data(src, SRC_SIZE, dst);
-    clock_end("pdep finished");
-   
-    char* dst2 = aligned_alloc(32, 3 * SRC_SIZE);
+    }
+    clock_end("pdep finished"); 
 
     clock_start(); 
-    //basic_stretch_data(src, SRC_SIZE, dst2);
+    for (int i = 0; i < 1000; ++i) {
+    basic_stretch_data(src, SRC_SIZE, dst2);
+    }
     clock_end("basic finished");
 
     // Validate
