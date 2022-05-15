@@ -6,24 +6,27 @@
 #include <stdint.h>
 #include <limits.h>
 
-#ifndef __AVX__
-#error "AVX needed"
+#ifndef __AVX2__
+#error "AVX2 needed"
 #endif
 
 #ifndef __BMI2__
 #error 'BMI2 needed"
 #endif
 
-const size_t SRC_SIZE = 1ULL << 30; // bytes
+const size_t SRC_SIZE = 1ULL << 33; // bytes
 
 uint32_t lut[256];
+// Probably too big to fit in L1d...
+uint64_t lut16[65536];
 
-// Reference implementation, working byte by byte
+
+// Reference implementation, working byte by byte (~7.200 cycles / byte)
 void basic_stretch_data(void* src, size_t bytes, void* dst) {
     uint8_t* src_c = src;
     uint8_t* dst_c = dst;
 
-    for (int i = 0; i < bytes; ++i) {
+    for (size_t i = 0; i < bytes; ++i) {
 	uint32_t t = lut[src_c[i]]; // lut filled below
 
 	dst_c[3*i] = (t & 0xff);
@@ -32,19 +35,37 @@ void basic_stretch_data(void* src, size_t bytes, void* dst) {
     }
 }
 
+// Attempts to be a bit more clever, working in 16-bit chunks and writing in 64-bit chunks (~5.01 cycles / byte)
+void improved_stretch_data(void* src, size_t bytes, void* dst) {
+    uint16_t* src_c = src;
+    uint64_t* dst_c = dst;
+
+    for (size_t i = 0; i < bytes / 2; i += 4) {
+	// 48 bytes per cycle
+	uint64_t t1 = lut16[src_c[i]]; // lut filled below
+	uint64_t t2 = lut16[src_c[i+1]];
+	uint64_t t3 = lut16[src_c[i+2]];
+	uint64_t t4 = lut16[src_c[i+3]];
+
+	dst_c[3*i/4] = t1 | ((t2 & 0xffff) << 48);
+	dst_c[3*i/4+1] = ((t2 & 0xffffffff0000) >> 16) | ((t3 & 0xffffffff) << 32);
+	dst_c[3*i/4+2] = ((t3 & 0xffff00000000) >> 32) | (t4 << 16);
+    }
+}
+
 // Every three bits toggled, in one of three shifts
 #define BIT_MASK_1 0x9249249249249249ULL
 #define BIT_MASK_2 (BIT_MASK_1 >> 1)
 #define BIT_MASK_3 (BIT_MASK_1 >> 2)
 
-// Expects 32-bit alignment
+// Expects 32-bit alignment. ~4.363 cycles / byte
 void pdep_stretch_data(void* src, size_t bytes, void* dst) { 
     uint64_t* src_c = src;
     uint64_t* dst_c = dst;
 
     uint64_t p1, p2, p3, p4, p5, p6;
 
-    for (int i = 0; i < bytes / 8; i += 4) {
+    for (size_t i = 0; i < bytes / 8; i += 4) {
 	// Output 96 bytes per loop 
 	uint64_t k = src_c[i];
 
@@ -74,7 +95,7 @@ void pdep_stretch_data(void* src, size_t bytes, void* dst) {
 #define DEFINE_TRIPLIFY(name, IntType, Out) Out name(IntType b) { \
     Out s = 0; \
     for (int i = 0; i < sizeof(IntType) * CHAR_BIT; ++i) { \
-	s |= (b & (1 << i)) << (2 * i); \
+	s |= (Out)(b & (1 << i)) << (2 * i); \
     } \
     return s; \
 }
@@ -89,13 +110,11 @@ void fill_triplify_lut() {
     } while (++b != 0);
 }
 
-// Probably too big to fit in L1d...
-uint64_t lut16[65536];
-
 void fill_triplify_lut16() {
     uint16_t b = 0;
+
     do {
-	lut16[b] = triplify8(b);
+	lut16[b] = triplify16(b); 
     } while (++b != 0);
 }
 
@@ -110,9 +129,12 @@ void clock_end(const char* msg) {
 
 int main() {
     fill_triplify_lut();
+    fill_triplify_lut16();
 
     char* src = aligned_alloc(32, SRC_SIZE);
     char* dst = aligned_alloc(32, 3 * SRC_SIZE);
+
+    printf("Initializing data\n");
 
     // Init source with some data
     for (size_t i = 0; i < SRC_SIZE; ++i) {
@@ -127,7 +149,7 @@ int main() {
     char* dst2 = aligned_alloc(32, 3 * SRC_SIZE);
 
     clock_start(); 
-    basic_stretch_data(src, SRC_SIZE, dst2);
+    //basic_stretch_data(src, SRC_SIZE, dst2);
     clock_end("basic finished");
 
     // Validate
