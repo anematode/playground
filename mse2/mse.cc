@@ -16,9 +16,9 @@
 #endif
 
 using IType = uint64_t;
-constexpr IType _SEARCH_MAX = 2'000'000'000ULL;
+constexpr IType _SEARCH_MAX = 20'000'000ULL;
 
-constexpr IType SEARCH_MAX = (_SEARCH_MAX / 1024 + 1) * 1024;
+constexpr IType SEARCH_MAX = (_SEARCH_MAX / 1536 + 1) * 1536;
 
 alignas(32) std::bitset<SEARCH_MAX> reached;
 alignas(32) std::bitset<SEARCH_MAX> reached2;
@@ -185,31 +185,96 @@ void clock_start() {
 }
 
 void clock_end(const char* msg) {
-	printf("Clock %s took %f s\n", msg, (double)(clock() - c) / CLOCKS_PER_SEC);
+	printf("Timer '%s' took %f s\n", msg, (double)(clock() - c) / CLOCKS_PER_SEC);
+}
+
+void count_congruences(IType begin=0, IType end=SEARCH_MAX) {
+	if (begin % 1536 != 0 || end % 1536 != 0) {
+		throw std::runtime_error("Invalid congruence range");
+	}
+	// To count congruences, we iterate over 256 bits at a time, mask out the congruences,
+	// and perform a population count on the resultant vectors. AVX2 lacks a popcnt instruction,
+	// so we need to do some shuffling. Ideas thanks to Wojciech Mula.
+	
+	const __m256i lookup = _mm256_setr_epi8(
+        /* 0 */ 0, /* 1 */ 1, /* 2 */ 1, /* 3 */ 2,
+        /* 4 */ 1, /* 5 */ 2, /* 6 */ 2, /* 7 */ 3,
+        /* 8 */ 1, /* 9 */ 2, /* a */ 2, /* b */ 3,
+        /* c */ 2, /* d */ 3, /* e */ 3, /* f */ 4,
+
+        /* 0 */ 0, /* 1 */ 1, /* 2 */ 1, /* 3 */ 2,
+        /* 4 */ 1, /* 5 */ 2, /* 6 */ 2, /* 7 */ 3,
+        /* 8 */ 1, /* 9 */ 2, /* a */ 2, /* b */ 3,
+        /* c */ 2, /* d */ 3, /* e */ 3, /* f */ 4
+    	);
+
+    	const __m256i low_mask = _mm256_set1_epi8(0x0f);
+
+	// Popcnt accumlators for each 1 through 4
+   	__m256i acc = _mm256_setzero_si256();
+	__m256i acc1 = _mm256_setzero_si256();
+	__m256i acc2 = _mm256_setzero_si256();
+	__m256i acc3 = _mm256_setzero_si256();
+
+	__m256i lo, hi, popcnt1, popcnt2;
+
+	const char* _reached = reinterpret_cast<char*>(&reached);
+
+#define PERFORM_ITER { \
+	__m256i data = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(_reached + i)); \
+	const __m256i lo  = _mm256_and_si256(data, low_mask); \
+        const __m256i hi  = _mm256_and_si256(_mm256_srli_epi16(data, 4), low_mask); \
+        const __m256i popcnt1 = _mm256_shuffle_epi8(lookup, lo); \
+        const __m256i popcnt2 = _mm256_shuffle_epi8(lookup, hi); \
+        local = _mm256_add_epi8(local, popcnt1); \
+        local = _mm256_add_epi8(local, popcnt2); \
+	i += 32; \
+}
+
+	for (size_t i = 0; i < SEARCH_MAX / 8; ) {
+       		__m256i local = _mm256_setzero_si256();
+		PERFORM_ITER PERFORM_ITER PERFORM_ITER PERFORM_ITER
+		PERFORM_ITER PERFORM_ITER PERFORM_ITER PERFORM_ITER
+		acc = _mm256_add_epi64(acc, _mm256_sad_epu8(local, _mm256_setzero_si256())); // accumulate
+	}
+	
+   	uint64_t result = 0;
+
+    	result += static_cast<uint64_t>(_mm256_extract_epi64(acc, 0));
+    	result += static_cast<uint64_t>(_mm256_extract_epi64(acc, 1));
+    	result += static_cast<uint64_t>(_mm256_extract_epi64(acc, 2));
+    	result += static_cast<uint64_t>(_mm256_extract_epi64(acc, 3));
+
+	std::cout << "Counted " << result << " solutions out of " << SEARCH_MAX << "\n";
 }
 
 int main() {
-	if (SEARCH_MAX % 1024 != 0) {
-		throw std::runtime_error("SEARCH_MAX must be a multiple of 1024");
+	std::ios_base::sync_with_stdio(false);
+	if (SEARCH_MAX % 1536 != 0) {
+		throw std::runtime_error("SEARCH_MAX must be a multiple of 1536");
 	}
 
 	// Force page allocation
 	memset((void*)&reached, 0, SEARCH_MAX / 8);
+	printf("Allocated %llu bytes of scratch memory\n", SEARCH_MAX / 8);
 
 	clock_start();
-	memset((void*)&reached, 0, SEARCH_MAX / 8);
 	init_1536(); // init first results
-	clock_end("standard method");
+	clock_end("first 1536 entry initialization");
 
 	clock_start();
 	init_rest();
-	clock_end("enjoyer method");
+	clock_end("large computation");
 
+	printf("%llu entries computed\n", SEARCH_MAX);
+	count_congruences();
+
+	uint64_t cnt = 0;
 	for_each_entry([&] (IType i, bool r) {
-			if (!r && i % 4 == 3) {
-			std::cout << i << '\n';
+			if (r) {
+			cnt++;
 			}
 			});
+	std::cout << cnt <<'\n';
 
-	std::cout << "Checksum 100000: " << checksum(100000) << '\n';
 }
