@@ -1,20 +1,22 @@
 // g++ mse.cc -o mse -O3 -march=native -std=c++14
 
 #include <iostream>
+#include <bitset>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <immintrin.h>
 
 #ifndef __AVX__
-#error "AVX not supported (please define -march=native if your CPU does support it)
+#error "AVX not supported (please define -march=native if your CPU does support it)"
 #endif
 
 #ifndef __BMI2__
-#error "BMI2 not supported (please define -march=native if your CPU does support it)
+#error "BMI2 not supported (please define -march=native if your CPU does support it)"
 #endif
 
 using IType = uint64_t;
-constexpr IType _SEARCH_MAX = 200000ULL;//2'000'000'000ULL;
+constexpr IType _SEARCH_MAX = 2'000'000'000ULL;
 
 constexpr IType SEARCH_MAX = (_SEARCH_MAX / 1024 + 1) * 1024;
 
@@ -23,7 +25,7 @@ alignas(32) std::bitset<SEARCH_MAX> reached2;
 
 // x |-> 2x+1, 3x, 3x+2, 3x+7
 void init_1536(IType cnt=1536) {
-  	reached[1] = true;
+	reached[1] = true;
 
 
 	for (IType i = 2; i <= cnt; ++i) { // 3 * 256 * 2
@@ -45,13 +47,15 @@ void init_1536(IType cnt=1536) {
 void init_rest() {
 	// We wish to implement a branchless and vectorized version of init_1024, processing things in 256-bit chunks.
 
+	const uint64_t start = 1536;
 	uint64_t* _reached = reinterpret_cast<uint64_t*>(&reached);
 
 	__m128i read2, scale2p1, scale2p2;
-	uint64_t scale2p12, scale2p21, scale2p11, scale2p22 = 0, scale3p03, scale3p10, scale3p11, scale3p12 = 0, scale2p02;
+	uint64_t scale2p12, scale2p21, scale2p11, scale2p22 = 0;
+	uint64_t scale3p03, scale3p10, scale3p11, scale3p12 = _pdep_u64(_reached[start / 3 - 1], BIT_MASK_3), scale2p02;
 	uint64_t store1, store2, store3, store4, store5, store6;
 
-	for (IType _i = 1536; _i < SEARCH_MAX; _i += 768 /* 64 * 12 */) { // i is index in bits
+	for (IType _i = start; _i < SEARCH_MAX; _i += 768 /* 64 * 12 */) { // i is index in bits
 		IType write_i = _i / 64;  // writing to this index in uint64_t
 		IType read2s = write_i / 2; // reading from here and spreading by 2 gives 2*x
 		IType read3s = write_i / 3 - 1; // reading from here will allow us to spread by 3 to get 3*x
@@ -70,18 +74,17 @@ void init_rest() {
 		scale2p21 = _mm_extract_epi64(scale2p2, 0); \
 		scale2p22 = _mm_extract_epi64(scale2p2, 1); \
 
-		compute_scale2_parts(read2s)
+		compute_scale2_parts(read2s);
 
 		// We wish to extract 3x, 3x+2, and 3x+7. We do so with pdeps and shifts, first extracting 3x,
 		// then performing some shifts
 
 		// 3x+a
-		uint64_t scale3p0 = _reached[read3s];
 		uint64_t scale3p1 = _reached[read3s + 1];
 		uint64_t scale3p2 = _reached[read3s + 2];
 		uint64_t scale3p3 = _reached[read3s + 3];
 		uint64_t scale3p4 = _reached[read3s + 4];
-		
+
 #define extract_scale3(src) \
 		scale3p03 = scale3p12; \
 		scale3p10 = _pdep_u64(src, BIT_MASK_1); \
@@ -93,19 +96,17 @@ void init_rest() {
 		store2 = ((scale3p10 >> 57) | (scale3p11 << 2) | scale3p11 | (scale3p11 << 7)) | (scale3p10 >> 62); \
 		store3 = ((scale3p11 >> 57) | (scale3p12 << 2) | scale3p12 | (scale3p12 << 7)) | (scale3p11 >> 62); 	
 
-		extract_scale3(scale3p1)
-
-		scale3p03 = _pdep_u64(scale3p0 >> 43, BIT_MASK_3); // unique, to get the bits from previous
+		extract_scale3(scale3p1);
 
 		// Attempt to hide pdep latency
-		extract_scale2
+		extract_scale2;
 
-		compute_scale3_parts(store1, store2, store3)
+		compute_scale3_parts(store1, store2, store3);
 
 		// Not dependent on previous
-		extract_scale3(scale3p2)
+		extract_scale3(scale3p2);
 
-		compute_scale3_parts(store4, store5, store6)
+		compute_scale3_parts(store4, store5, store6);
 
 #define merge_parts(store1, store2, store3, store4) \
 		store1 |= (scale2p11 << 1) | (scale2p02 >> 63); \
@@ -120,33 +121,33 @@ void init_rest() {
 		*(_reached + write_i + offset + 2) = store3; \
 		*(_reached + write_i + offset + 3) = store4;
 
-		merge_parts(store1, store2, store3, store4)
+		merge_parts(store1, store2, store3, store4);
 
-		write_data(0, store1, store2, store3, store4)
+		write_data(0, store1, store2, store3, store4);
 
-		compute_scale2_parts(read2s + 2)
+		compute_scale2_parts(read2s + 2);
 
-		extract_scale3(scale3p3)
+		extract_scale3(scale3p3);
 
-		extract_scale2
+		extract_scale2;
 
-		compute_scale3_parts(store1, store2, store3)
+		compute_scale3_parts(store1, store2, store3);
 
-		merge_parts(store5, store6, store1, store2)
-		
-	 	write_data(4, store5, store6, store1, store2)	
+		merge_parts(store5, store6, store1, store2);
 
-		extract_scale3(scale3p4)
-		
-		compute_scale2_parts(read2s + 4)
+		write_data(4, store5, store6, store1, store2);
 
-		compute_scale3_parts(store4, store5, store6)
+		extract_scale3(scale3p4);
 
-		extract_scale2
+		compute_scale2_parts(read2s + 4);
 
-		merge_parts(store3, store4, store5, store6)
-		
-		write_data(8, store3, store4, store5, store6)
+		compute_scale3_parts(store4, store5, store6);
+
+		extract_scale2;
+
+		merge_parts(store3, store4, store5, store6);
+
+		write_data(8, store3, store4, store5, store6);
 	}
 }
 
@@ -178,34 +179,37 @@ void for_each_entry(L l) {
 	}
 }
 
+clock_t c;
+void clock_start() {
+	c = clock();
+}
+
+void clock_end(const char* msg) {
+	printf("Clock %s took %f s\n", msg, (double)(clock() - c) / CLOCKS_PER_SEC);
+}
+
 int main() {
 	if (SEARCH_MAX % 1024 != 0) {
 		throw std::runtime_error("SEARCH_MAX must be a multiple of 1024");
 	}
 
+	// Force page allocation
+	memset((void*)&reached, 0, SEARCH_MAX / 8);
 
-	init_1536(1536); // init first results
+	clock_start();
+	memset((void*)&reached, 0, SEARCH_MAX / 8);
+	init_1536(); // init first results
+	clock_end("standard method");
+
+	clock_start();
 	init_rest();
-
+	clock_end("enjoyer method");
 
 	for_each_entry([&] (IType i, bool r) {
-		if (!r && i % 4 == 3) {
+			if (!r && i % 4 == 3) {
 			std::cout << i << '\n';
-		}
-	});
-
-	memcpy((void*)&reached2,  (void*)&reached, SEARCH_MAX / 8);
-	init_1536(SEARCH_MAX);
-	std::cout << reached[554] << '\n';
-
-	for_each_entry([&] (IType i, bool r) {
-			if (r != reached2[i]) {
-			std::cout << "Difference at i = " << i << ", expected " << r << '\n';
-			throw std::runtime_error("hi");
 			}
 			});
-
-
 
 	std::cout << "Checksum 100000: " << checksum(100000) << '\n';
 }
