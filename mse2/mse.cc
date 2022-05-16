@@ -2,6 +2,7 @@
 
 #include <iostream>
 #include <stdlib.h>
+#include <string.h>
 #include <immintrin.h>
 
 #ifndef __AVX__
@@ -18,19 +19,14 @@ constexpr IType _SEARCH_MAX = 200000ULL;//2'000'000'000ULL;
 constexpr IType SEARCH_MAX = (_SEARCH_MAX / 1024 + 1) * 1024;
 
 alignas(32) std::bitset<SEARCH_MAX> reached;
+alignas(32) std::bitset<SEARCH_MAX> reached2;
 
 // x |-> 2x+1, 3x, 3x+2, 3x+7
-void init_1536() {
+void init_1536(IType cnt=1536) {
   	reached[1] = true;
 
 
-	for (IType i = 2; i < 1536; ++i) { // 3 * 256 * 2
-		if (false && i < 1536) { if (i % 10 == 0) {
-			reached[i] = true;
-		}
-
-		continue;
-		}
+	for (IType i = 2; i <= cnt; ++i) { // 3 * 256 * 2
 		if ((i % 2 == 1 && reached[((i - 1) / 2)]) ||
 				(i % 3 == 0 && reached[i / 3]) ||
 				(i > 7 && i % 3 == 1 && reached[(i - 7) / 3]) ||
@@ -93,13 +89,13 @@ void init_rest() {
 		scale3p12 = _pdep_u64(src >> 43, BIT_MASK_3); 
 
 #define compute_scale3_parts(store1, store2, store3) \
-		store1 = (scale3p03 >> 57) | (scale3p10 << 2) | scale3p10 | (scale3p10 << 7) | (scale3p03 >> 63); \
-		store2 = ((scale3p10 >> 57) | (scale3p11 << 2) | scale3p11 | (scale3p11 << 7)) | (scale3p10 >> 63); \
-		store3 = ((scale3p11 >> 57) | (scale3p12 << 2) | scale3p12 | (scale3p12 << 7)) | (scale3p11 >> 63); 	
-
-		scale3p03 = _pdep_u64(scale3p0 >> 43, BIT_MASK_3); // unique, to get the bits from last time
+		store1 = (scale3p03 >> 57) | (scale3p10 << 2) | scale3p10 | (scale3p10 << 7) | (scale3p03 >> 62); \
+		store2 = ((scale3p10 >> 57) | (scale3p11 << 2) | scale3p11 | (scale3p11 << 7)) | (scale3p10 >> 62); \
+		store3 = ((scale3p11 >> 57) | (scale3p12 << 2) | scale3p12 | (scale3p12 << 7)) | (scale3p11 >> 62); 	
 
 		extract_scale3(scale3p1)
+
+		scale3p03 = _pdep_u64(scale3p0 >> 43, BIT_MASK_3); // unique, to get the bits from previous
 
 		// Attempt to hide pdep latency
 		extract_scale2
@@ -188,7 +184,7 @@ int main() {
 	}
 
 
-	init_1536(); // init first 1024 results
+	init_1536(1536); // init first results
 	init_rest();
 
 
@@ -197,6 +193,18 @@ int main() {
 			std::cout << i << '\n';
 		}
 	});
+
+	memcpy((void*)&reached2,  (void*)&reached, SEARCH_MAX / 8);
+	init_1536(SEARCH_MAX);
+	std::cout << reached[554] << '\n';
+
+	for_each_entry([&] (IType i, bool r) {
+			if (r != reached2[i]) {
+			std::cout << "Difference at i = " << i << ", expected " << r << '\n';
+			throw std::runtime_error("hi");
+			}
+			});
+
 
 
 	std::cout << "Checksum 100000: " << checksum(100000) << '\n';
