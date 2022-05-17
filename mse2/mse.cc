@@ -1,4 +1,4 @@
-// g++ mse.cc -o mse -O3 -march=native -std=c++14
+// g++ mse.cc -o mse -O3 -march=native -std=c++14 -fno-strict-aliasing
 
 #include <iostream>
 #include <bitset>
@@ -7,8 +7,11 @@
 #include <time.h>
 #include <immintrin.h>
 #include <fstream>
+#include <atomic>
+#include <thread>
+#include <vector>
 
-#ifndef __AVX__
+#ifndef __AVX2__
 #error "AVX not supported (please define -march=native if your CPU does support it)"
 #endif
 
@@ -17,7 +20,11 @@
 #endif
 
 using IType = uint64_t;
-constexpr IType _SEARCH_MAX = 2'000'000'000'000ULL;
+constexpr IType _SEARCH_MAX = 800'000'000'000ULL;
+constexpr IType PROGRESS_EVERY = 1'000'000'000ULL;
+
+#define SHOW_PROGRESS 1
+#define USE_THREADS 0
 
 constexpr IType SEARCH_MAX = (_SEARCH_MAX / 1536 + 1) * 1536;
 
@@ -47,18 +54,21 @@ void init_1536(IType cnt=1536) {
 #define BIT_MASK_2 (BIT_MASK_1 >> 1)
 #define BIT_MASK_3 (BIT_MASK_1 >> 2)
 
-void init_rest() {
-	// We wish to implement a branchless and vectorized version of init_1024, processing things in 256-bit chunks.
+std::atomic<uint64_t> completed;
 
-	const uint64_t start = 1536;
+void init_rest(uint64_t start = 1536, uint64_t end = SEARCH_MAX) {
+	// We wish to implement a branchless and vectorized version of init_1024, processing things in 256-bit chunks.
+	if (start >= SEARCH_MAX) start = SEARCH_MAX - 1536;
+	if (end > SEARCH_MAX) end = SEARCH_MAX;
+
 	uint64_t* _reached = reinterpret_cast<uint64_t*>(reached);
 
 	__m128i read2, scale2p1, scale2p2;
 	uint64_t scale2p12, scale2p21, scale2p11, scale2p22 = 0;
-	uint64_t scale3p03, scale3p10, scale3p11, scale3p12 = _pdep_u64(_reached[start / 3 - 1], BIT_MASK_3), scale2p02;
+	uint64_t scale3p03, scale3p10, scale3p11, scale3p12 = _pdep_u64(_reached[start / (3*64) - 1], BIT_MASK_3), scale2p02;
 	uint64_t store1, store2, store3, store4, store5, store6;
 
-	for (IType _i = start; _i < SEARCH_MAX; _i += 768 /* 64 * 12 */) { // i is index in bits
+	for (IType _i = start; _i < end; _i += 768 /* 64 * 12 */) { // i is index in bits
 		IType write_i = _i / 64;  // writing to this index in uint64_t
 		IType read2s = write_i / 2; // reading from here and spreading by 2 gives 2*x
 		IType read3s = write_i / 3 - 1; // reading from here will allow us to spread by 3 to get 3*x
@@ -152,7 +162,7 @@ void init_rest() {
 
 		write_data(8, store3, store4, store5, store6);
 
-		if (_i % (768 * (SEARCH_MAX / 76800)) == 0) {
+		if (SHOW_PROGRESS && _i % (768 * (PROGRESS_EVERY / 768)) == 0) {
 			printf("Percentage complete: %f%%\n", (double)_i / (SEARCH_MAX / 100));
 		}
 	}
@@ -186,13 +196,16 @@ void for_each_entry(L l) {
 	}
 }
 
-clock_t c;
+struct timespec start, finish;
 void clock_start() {
-	c = clock();
+	clock_gettime(CLOCK_MONOTONIC, &start);
 }
 
 void clock_end(const char* msg) {
-	printf("Timer '%s' took %f s\n", msg, (double)(clock() - c) / CLOCKS_PER_SEC);
+	clock_gettime(CLOCK_MONOTONIC, &finish);
+
+	printf("Timer '%s' took %f s\n", msg, (double)(finish.tv_sec - start.tv_sec) + 
+			(finish.tv_nsec - start.tv_nsec) / 1000000000.0);
 }
 
 void count_congruences(IType begin=0, IType end=SEARCH_MAX) {
@@ -255,6 +268,38 @@ void count_congruences(IType begin=0, IType end=SEARCH_MAX) {
 	std::cout << "Counted " << result << " solutions out of " << SEARCH_MAX << "\n";
 }
 
+#define USE_THREADS_THRESHOLD 400'000'000 /* bits */
+#define NUM_THREADS 4
+
+void wrap_init_rest(uint64_t start, uint64_t end) {
+#if !USE_THREADS
+	init_rest(start, end);
+#else
+	if (end - start < USE_THREADS_THRESHOLD) {
+		init_rest(start, end);
+	} else {
+		// Spawn some threads to divvy up the work
+		uint64_t s_d = start / 1536;
+		uint64_t e_d = end / 1536;
+
+		std::vector<std::thread> threads;
+
+		for (int i = 0; i < NUM_THREADS; ++i) {
+			uint64_t t_start = (s_d + (e_d - s_d) * i / NUM_THREADS) * 1536;
+		       	uint64_t t_end = (s_d + (e_d - s_d) * (i + 1) / NUM_THREADS) * 1536;
+
+			std::thread th{init_rest, t_start, t_end};
+			threads.push_back(std::move(th));
+		}
+
+		for (auto& th : threads) {
+			th.join();
+		}
+
+	}
+#endif // USE_THREADS
+}
+
 void write_unreachable() {
 	std::ofstream dat("./unreachable.dat", std::ios::out | std::ios::binary);
 
@@ -262,7 +307,7 @@ void write_unreachable() {
 		throw std::runtime_error("Failed to open file");
 	}
 
-	const char* HEADER = "UNSN";
+	const char* HEADER = "UNREACHS";
 
 	dat.write(HEADER, strlen(HEADER));
 	printf("Writing solutions to file");
@@ -294,7 +339,7 @@ int main() {
 
 	printf("Forcing page allocation\n");
 	// Force page allocation
-	memset((void*)reached, 0, SEARCH_MAX / 8);
+	memset((void*)reached, 1, SEARCH_MAX / 8);
 	printf("Allocated %llu bytes of scratch memory\n", SEARCH_MAX / 8);
 
 	clock_start();
@@ -302,7 +347,16 @@ int main() {
 	clock_end("first 1536 entry initialization");
 
 	clock_start();
-	init_rest();
+	
+	// Split up the process into [1536 * 2^n, 1536 * 2^(n+1)] for various n
+	
+	uint64_t n = 1;
+
+	do {
+		wrap_init_rest(1536 * n, 1536 * 2 * n);
+		n <<= 1;
+	} while (n < SEARCH_MAX / 1536);
+
 	clock_end("large computation");
 
 	printf("%llu entries computed\n", SEARCH_MAX);
