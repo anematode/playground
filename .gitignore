@@ -1,4 +1,5 @@
 *.swp
+mse2/unreachable.dat
 **/.DS_Store
 *.tmp
 *.out
