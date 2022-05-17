@@ -98,8 +98,8 @@ void print_moduli(std::vector<uint64_t> v) {
 	std::vector<std::thread> threads;
 	for (int i = 0; i < NUM_THREADS; ++i) {
 		std::thread th ([&] (int i) {
-				count_congruences<M>(chunks[i], chunks[i + 1], results, results_mutex);
-				}, i);
+			count_congruences<M>(chunks[i], chunks[i + 1], results, results_mutex);
+		}, i);
 		threads.push_back(std::move(th));
 	}
 
@@ -133,7 +133,7 @@ int main() {
 
 	uint64_t cnt = 0;
 	for (int i = 0; i < v.size(); ++i) {
-		if (i % 1000000 == 0) {
+		if (v[i] % 8 == 7) {
 			std::cout << i << '\t' << v[i] << '\n';
 		}
 	}

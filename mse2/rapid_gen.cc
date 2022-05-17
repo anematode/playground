@@ -1,4 +1,4 @@
-// g++ mse.cc -o mse -O3 -march=native -std=c++14 -fno-strict-aliasing
+// g++ rapid_gen.cc -o rapid_gen -O3 -march=native -std=c++14 -fno-strict-aliasing
 
 #include <iostream>
 #include <bitset>
@@ -20,7 +20,7 @@
 #endif
 
 using IType = uint64_t;
-constexpr IType _SEARCH_MAX = 2'000'000'000'000ULL;
+constexpr IType _SEARCH_MAX = 1'000'000'000ULL;
 constexpr IType PROGRESS_EVERY = 1'000'000'000ULL;
 
 #define SHOW_PROGRESS 1
@@ -32,7 +32,7 @@ char* reached;
 
 // x |-> 2x+1, 3x, 3x+2, 3x+7
 void init_1536(IType cnt=1536) {
-	std::bitset<1536> b;
+	std::bitset<SEARCH_MAX> b;
 
 	b[1] = true;
 
@@ -45,7 +45,7 @@ void init_1536(IType cnt=1536) {
 		}            
 	}
 
-	memcpy((void*)reached, (void*)&b, 1536 / 8);
+	memcpy((void*)reached, (void*)&b, cnt / 8);
 }
 
 
@@ -341,21 +341,23 @@ int main() {
 	printf("Allocated %llu bytes of scratch memory\n", SEARCH_MAX / 8);
 
 	clock_start();
-	init_1536(); // init first results
+	init_1536(SEARCH_MAX); // init first results
 	clock_end("first 1536 entry initialization");
 
-	clock_start();
-	
-	// Split up the process into [1536 * 2^n, 1536 * 2^(n+1)] for various n
-	
-	uint64_t n = 1;
+	return 0;
 
-	do {
-		wrap_init_rest(1536 * n, 1536 * 2 * n);
-		n <<= 1;
-	} while (n < SEARCH_MAX / 1536);
+	// clock_start();
+	// 
+	// // Split up the process into [1536 * 2^n, 1536 * 2^(n+1)] for various n
+	// 
+	// uint64_t n = 1;
 
-	clock_end("large computation");
+	// do {
+	// 	wrap_init_rest(1536 * n, 1536 * 2 * n);
+	// 	n <<= 1;
+	// } while (n < SEARCH_MAX / 1536);
+
+	// clock_end("large computation");
 
 	printf("%llu entries computed\n", SEARCH_MAX);
 	clock_start();
