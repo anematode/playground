@@ -6,6 +6,7 @@
 #include <string.h>
 #include <time.h>
 #include <immintrin.h>
+#include <fstream>
 
 #ifndef __AVX__
 #error "AVX not supported (please define -march=native if your CPU does support it)"
@@ -16,26 +17,28 @@
 #endif
 
 using IType = uint64_t;
-constexpr IType _SEARCH_MAX = 20'000'000ULL;
+constexpr IType _SEARCH_MAX = 2'000'000'000'000ULL;
 
 constexpr IType SEARCH_MAX = (_SEARCH_MAX / 1536 + 1) * 1536;
 
-alignas(32) std::bitset<SEARCH_MAX> reached;
-alignas(32) std::bitset<SEARCH_MAX> reached2;
+char* reached;
 
 // x |-> 2x+1, 3x, 3x+2, 3x+7
 void init_1536(IType cnt=1536) {
-	reached[1] = true;
+	std::bitset<1536> b;
 
+	b[1] = true;
 
 	for (IType i = 2; i <= cnt; ++i) { // 3 * 256 * 2
-		if ((i % 2 == 1 && reached[((i - 1) / 2)]) ||
-				(i % 3 == 0 && reached[i / 3]) ||
-				(i > 7 && i % 3 == 1 && reached[(i - 7) / 3]) ||
-				(i % 3 == 2 && reached[(i - 2) / 3])) {
-			reached[i] = true;
+		if ((i % 2 == 1 && b[((i - 1) / 2)]) ||
+				(i % 3 == 0 && b[i / 3]) ||
+				(i > 7 && i % 3 == 1 && b[(i - 7) / 3]) ||
+				(i % 3 == 2 && b[(i - 2) / 3])) {
+			b[i] = true;
 		}            
 	}
+
+	memcpy((void*)reached, (void*)&b, 1536 / 8);
 }
 
 
@@ -48,7 +51,7 @@ void init_rest() {
 	// We wish to implement a branchless and vectorized version of init_1024, processing things in 256-bit chunks.
 
 	const uint64_t start = 1536;
-	uint64_t* _reached = reinterpret_cast<uint64_t*>(&reached);
+	uint64_t* _reached = reinterpret_cast<uint64_t*>(reached);
 
 	__m128i read2, scale2p1, scale2p2;
 	uint64_t scale2p12, scale2p21, scale2p11, scale2p22 = 0;
@@ -148,6 +151,10 @@ void init_rest() {
 		merge_parts(store3, store4, store5, store6);
 
 		write_data(8, store3, store4, store5, store6);
+
+		if (_i % (768 * (SEARCH_MAX / 76800)) == 0) {
+			printf("Percentage complete: %f%%\n", (double)_i / (SEARCH_MAX / 100));
+		}
 	}
 }
 
@@ -158,7 +165,7 @@ IType checksum(IType lim) {
 		throw std::runtime_error("Limit too high");
 	}
 
-	IType* start = reinterpret_cast<IType*>(&reached);
+	IType* start = reinterpret_cast<IType*>(reached);
 	for (IType* i = start; i < start + lim / 64; ++i) {
 		s *= *i;
 		s += 2;
@@ -218,7 +225,7 @@ void count_congruences(IType begin=0, IType end=SEARCH_MAX) {
 
 	__m256i lo, hi, popcnt1, popcnt2;
 
-	const char* _reached = reinterpret_cast<char*>(&reached);
+	const char* _reached = reinterpret_cast<char*>(reached);
 
 #define PERFORM_ITER { \
 	__m256i data = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(_reached + i)); \
@@ -248,14 +255,46 @@ void count_congruences(IType begin=0, IType end=SEARCH_MAX) {
 	std::cout << "Counted " << result << " solutions out of " << SEARCH_MAX << "\n";
 }
 
+void write_unreachable() {
+	std::ofstream dat("./unreachable.dat", std::ios::out | std::ios::binary);
+
+	if (!dat) {
+		throw std::runtime_error("Failed to open file");
+	}
+
+	const char* HEADER = "UNSN";
+
+	dat.write(HEADER, strlen(HEADER));
+	printf("Writing solutions to file");
+	clock_start();
+
+	uint64_t* sus = reinterpret_cast<uint64_t*>(reached);
+	for (size_t k = 0; k < SEARCH_MAX / 64; ++k) {
+		uint64_t bitset = ~sus[k];  // only write UNREACHABLE solutions, hence bitwise NOT
+
+		while (bitset != 0) {
+			uint64_t t = bitset & -bitset;
+			int zeros = __builtin_ctzll(bitset);
+			uint64_t c = k * 64 + zeros;
+			dat.write(reinterpret_cast<const char*>(&c), sizeof(uint64_t));
+			bitset ^= t;
+		}
+	}
+
+	clock_end("disk write");
+}
+
 int main() {
 	std::ios_base::sync_with_stdio(false);
 	if (SEARCH_MAX % 1536 != 0) {
 		throw std::runtime_error("SEARCH_MAX must be a multiple of 1536");
 	}
 
+	reached = (char*)malloc(SEARCH_MAX / 8);
+
+	printf("Forcing page allocation\n");
 	// Force page allocation
-	memset((void*)&reached, 0, SEARCH_MAX / 8);
+	memset((void*)reached, 0, SEARCH_MAX / 8);
 	printf("Allocated %llu bytes of scratch memory\n", SEARCH_MAX / 8);
 
 	clock_start();
@@ -267,14 +306,9 @@ int main() {
 	clock_end("large computation");
 
 	printf("%llu entries computed\n", SEARCH_MAX);
+	clock_start();
 	count_congruences();
+	clock_end("count solutions");
 
-	uint64_t cnt = 0;
-	for_each_entry([&] (IType i, bool r) {
-			if (r) {
-			cnt++;
-			}
-			});
-	std::cout << cnt <<'\n';
-
+	write_unreachable();
 }
