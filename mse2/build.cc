@@ -10,10 +10,16 @@
 #include <iostream>
 #include <exception>
 #include <cstring>
+#include <thread>
+#include <array>
+#include <cstdint>
 
 // The end of computation is assumed to be equal to the last entry in the file. The file format begins with
 // an 8-byte header "UNREACHS" and then 64-bit integers
 const std::string UNREACHABLE_FILE {"./unreachable.dat"};
+
+const bool USE_THREADS = true;
+const int NUM_THREADS = 8;
 
 std::vector<uint64_t> read_unreachable_data() {
 	std::ifstream in(UNREACHABLE_FILE, std::ios::binary | std::ios::in);
@@ -46,14 +52,91 @@ std::vector<uint64_t> read_unreachable_data() {
 	return v;
 }
 
-int main() {
-	auto v = read_unreachable_data();
+using vec64iter = std::vector<uint64_t>::iterator;
 
-	std::cout << v.size() << '\n';
+std::vector<vec64iter> split_work(vec64iter from, vec64iter to, int threads) {
+	std::ptrdiff_t cnt = to - from;
 
-	for (uint64_t i : v) {
-		if (i % 4 == 3) {
+	std::vector<vec64iter> v;
+
+	for (int i = 0; i <= threads; ++i) {
+		v.push_back(from + i * cnt / threads);
+	}
+
+	return v;
+}
+
+template <int M>
+void count_congruences(vec64iter from,
+		vec64iter to,
+		std::array<uint64_t, M>& results,
+		std::mutex& results_mutex) {
+	std::array<uint64_t, M> unreachable = {0};
+
+	for (; from < to; ++from) {
+		unreachable[*from % M]++;
+	}
+
+	std::lock_guard<std::mutex> guard { results_mutex };
+	for (int i = 0; i < M; ++i) {
+		results[i] += unreachable[i];
+	}
+}
+
+enum class Format {
+	Numerical,
+	Pastable
+};
+
+template <int M, Format f=Format::Numerical>
+void print_moduli(std::vector<uint64_t> v) {
+	auto chunks = split_work(v.begin(), v.end(), NUM_THREADS);	
+	std::array<uint64_t, M> results = {0};
+
+	std::mutex results_mutex;
+
+	std::vector<std::thread> threads;
+	for (int i = 0; i < NUM_THREADS; ++i) {
+		std::thread th ([&] (int i) {
+				count_congruences<M>(chunks[i], chunks[i + 1], results, results_mutex);
+				}, i);
+		threads.push_back(std::move(th));
+	}
+
+	for (auto& th : threads) {
+		th.join();
+	}
+
+	std::cout << "Congruences mod " << M << ":\n";
+	for (int i = 0; i < M; ++i)  {
+		if constexpr (f == Format::Numerical) {
+			std::cout << "=" << i << ": " << results[i] << " (" << (double)results[i] / v.size() * 100 << "%)\n";
+		} else {
+			std::cout << i << '\t' << results[i] << '\n';
+		}
+	}
+}
+
+template <typename L>
+void print_satisfying(std::vector<uint64_t> v, L l) {
+	for (auto i : v) {
+		if (l(i)) {
 			std::cout << i << '\n';
 		}
 	}
+}
+
+int main() {
+	auto v = read_unreachable_data();	
+
+	std::cout << "Read " << v.size() << " unreachable integers." << '\n';
+
+	uint64_t cnt = 0;
+	for (int i = 0; i < v.size(); ++i) {
+		if (i % 1000000 == 0) {
+			std::cout << i << '\t' << v[i] << '\n';
+		}
+	}
+
+	// print_moduli<40, Format::Pastable>(v);
 }
