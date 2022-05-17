@@ -20,7 +20,7 @@
 #endif
 
 using IType = uint64_t;
-constexpr IType _SEARCH_MAX = 800'000'000'000ULL;
+constexpr IType _SEARCH_MAX = 2'000'000'000'000ULL;
 constexpr IType PROGRESS_EVERY = 1'000'000'000ULL;
 
 #define SHOW_PROGRESS 1
@@ -53,8 +53,6 @@ void init_1536(IType cnt=1536) {
 #define BIT_MASK_1 0x9249249249249249ULL
 #define BIT_MASK_2 (BIT_MASK_1 >> 1)
 #define BIT_MASK_3 (BIT_MASK_1 >> 2)
-
-std::atomic<uint64_t> completed;
 
 void init_rest(uint64_t start = 1536, uint64_t end = SEARCH_MAX) {
 	// We wish to implement a branchless and vectorized version of init_1024, processing things in 256-bit chunks.
