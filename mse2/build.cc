@@ -1,5 +1,6 @@
 // Input file format:
 // UNREACHS<64 bit int> ...
+// g++ build.cc -o build -std=c++17 -O3 -march=native -g
 
 
 // We only store the unreachable positions, and use them to construct the next unreachable positions.
@@ -16,7 +17,7 @@
 
 // The end of computation is assumed to be equal to the last entry in the file. The file format begins with
 // an 8-byte header "UNREACHS" and then 64-bit integers
-const std::string UNREACHABLE_FILE {"./unreachable.dat"};
+const std::string UNREACHABLE_FILE {"./unreachable2trillion.dat"};
 
 const bool USE_THREADS = true;
 const int NUM_THREADS = 8;
@@ -138,5 +139,5 @@ int main() {
 		}
 	}
 
-	// print_moduli<40, Format::Pastable>(v);
+	print_moduli<13, Format::Pastable>(v);
 }
